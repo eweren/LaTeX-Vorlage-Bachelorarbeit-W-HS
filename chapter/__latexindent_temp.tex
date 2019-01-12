@@ -1,0 +1,200 @@
+\section{Entwicklung}\label{sec:development}
+Im Folgenden wird die programmatische Entwicklung des Alexa Skills behandelt.
+\subsection{Authentifizierung}
+Da der Pflegix Alexa-Skill nutzerspezifische Inhalte (Nachrichten, Personen) anbieten soll, ist eine Authentifizierung gegen den Pflegix-Server notwendig. Amazon bietet für die Verknüpfung des Amazon-Accounts mit dem Account des eigenen Servers zwei Möglichkeiten an, die beide auf dem OAuth2 Protokoll beruhen, welches nun näher erläutert wird.
+\subsubsection{OAuth2 Protokoll}
+Das OAuth Protokoll wurde in der ersten Version 2006 entwickelt. Es ist ein offener Standard, der auf vielen Websites und von vielen Unternehmen genutzt wird, um eine Anmeldung und Authentifizierung auf den Servern zu gewährleisten.
+Das OAuth-Protokoll bietet Websites und Anwendungen die Möglichkeit, sich untereinander zu verknüpfen. Ein klassisches Beispiel dafür sind die Anmeldemöglichkeiten von Google, Facebook und anderen großen Unternehmen (,,Sign in with\ldots''), die auf vielen unabhängigen Seiten zu finden sind.
+
+Die für die Entwicklung eines Skills zur Verfügung stehenden Möglichkeiten zur Verknüpfung der Accounts sind im speziellen die beiden Grant-Methoden ,,Implicit Code Grant'' und ,,Auth Code Grant'' des OAuth Protokolls.
+
+Beim Implicit Code Grant wird der Nutzer auf eine Autorisierungsseite des Servers (hier des Pflegix Authentifizierungsservers) weitergeleitet. Dort gibt der Nutzer seine Login-Daten ein, die der Server verifiziert. Wenn die Authentifizierung korrekt war, gibt der Authentifizierungsserver einen Access-Token an den User Agent (hier die Alexa App) zurück. Mithilfe dieses Tokens kann sich der Alexa Service nun auf den Servern (in diesem Beispiel den Resource Server von Pflegix) authentifizieren um so nutzerspezifische Daten anzufragen.
+
+Beim Auth Code Grant bekommt der User Agent statt eines Access Tokens einen Autorisierungscode, welchen der Alexa Service immer wieder gegen einen neuen Access Token eintauschen kann.
+
+Da im Regelfall die OAuth-Server so konfiguriert sind, dass ein Access Token nicht lange gültig ist (Größenordnung mehrere Tage), präferiert Amazon die Auth Code Methode, da der Autorisierungscode deutlich länger Gültigkeit besitzt und so eine erneuter Autorisierung durch den Nutzer nicht nötig ist.
+\begin{figure} [H]
+    \includegraphics[width=\textwidth]{resources/images/implicit_amazon.png}
+    \caption{Implicit Code Grant (\citealp{Amazon.com2018})}
+    \label{fig:implicit}
+\end{figure}
+
+\begin{figure} [H]
+    \includegraphics[width=\textwidth]{resources/images/auth-code-grant-amazon.png}
+    \caption{Auth Code Grant (\citealp{Amazon.com2018})}
+    \label{fig:authcode}
+\end{figure}
+
+\subsubsection{Authentifizierungsserver}\label{sssec:authserver}
+Um das Account-Linking zwischen Pflegix und Alexa zu ermöglichen, muss zuerst gewährleistet werden, dass Pflegix eine der genannten Grant-Methoden, optimalerweise die Auth Code Grant Methode, unterstützt. Dafür war es notwendig, einen Authentifizierungsserver, der auf dem OAuth2 Protokoll basiert, zu erstellen, da zu dem Zeitpunkt noch mit dem Protokoll in der ersten Version authentifiziert wurde.
+Basierend auf dem Authentifizierungsserver von Hassanabad \citeyear{Hassanabad2018} sollte der Server mit der vorhandenen Datenbank verknüpft werden. Zuerst wurden dafür alle irrelevanten Code-Fragmente aus dem Repository von Frank Hassanabad entfernt und eine Verknüpfung mit der Datenbank (MongoDB) geschaffen. Um nun sowohl die Access-Tokens, als auch die Refresh-Tokens in der Datenbank speichern zu können, musste zuerst ein Datenbank-Model für beide Tokens erstellt werden, welches die relevanten Daten der Tokens beinhalten soll (tokenID, userID, role, expirationDate, clientID, scope). Daraufhin war es dann möglich, die durch den Server erstellten Tokens in der Datenbank abzuspeichern, sodass das vorhandene Backend auf die Tokens zugreifen kann, um so Webanfragen autorisieren zu können.
+
+Hier ist zu sehen, wie eine AccessToken mithilfe von Mongoose in der Datenbank abgespeichert wird:
+\begin{lstlisting}
+    // Create a new AccessToken from AccessToken-MongoDB-Model
+    // with given parameters
+    AccessToken.create({
+        tokenID,
+        expirationDate,
+        userID,
+        role,
+        clientID,
+        scope
+    }).then(res => {
+        console.log('Accesstoken: ', res);
+    })
+\end{lstlisting}
+Um nun sicherzustellen, dass nicht auch Nutzer, die nicht über das Passwort verfügen, einen validen Access-Token erhalten, ist es nötig, erstens in der der Datenbank anzufragen, ob es einen Nutzer gibt, sowie das übergebene Passwort zu hashen und mit der Datenbank abzugleichen. Erst dann wird ein Token erzeugt, zurückgesendet und abspeichert. Da für die Entwicklung des Alexa Skills der Auth Code Grant notwendig ist, müssen für die einzelnen Clients, also übergeordneten Gruppen (beispielsweise Alexa, App oder normale Website), jeweils eine ClientID und eine ClientSecret erstellt werden, mit denen sich diese Clients gegenüber dem Authentifizierungsserver zu erkennen geben. Das soll eine zusätzliche Sicherheitsebene darstellen, da nur dann Login-Anfragen verarbeitet werden, wenn auch der Client identifiziert wurde. Zusätzlich bietet das die Möglichkeit, das Verbinden von anderen Organisationen oder Websites zuzulassen aber auch einzuschränken.
+
+In folgender Grafik ist dargestellt, wie der Technologiestack für die Website vor und nach  der Einbindung des Authentifizierungsservers aufgebaut war.
+\begin{figure} [H]
+    \includegraphics[width=\textwidth]{resources/images/TechStack.jpg}
+    \caption{Infrastruktur Pflegix}
+    \label{fig:techstack}
+\end{figure}
+
+Nachdem die Authentifizierungsmöglichkeit für den Alexa-Skill entwickelt war, könnte mit der eigentlichen Skill-Programmierung fortgefahren werden.
+
+\subsection{Amazon Developer Console}
+In der Amazon Developer Console wird die Grundlage für die Interaktion des Nutzers mit dem Alexa-Skill geschaffen, indem durch sie die ersten Eintrittspunkte für den Nutzer erstellt werden.
+
+\subsubsection{Interaktionsmodell}
+Um das in Kapitel \ref{sec:konzeption} beschriebene Interaktionsmodell nun auf den Skill zu übertragen, werden zunächst sogenannte Intents erstellt, die als Sprachbefehle dienen. Ein einzelner dieser Sprachbefehle kann dabei verschiedene Ausführungen haben. Da eine Funktion eines Skills von verschieden Nutzern oft anders gestartet wird, ist es nötig möglichst viele verschiedene Wörter oder Sätze für einen Sprachbefehl zu definieren. Nur so kann gewährleistet werden, dass ein Nutzer auch ohne große Vorkenntnis und ohne Handbuch auskommt.
+
+Um das Dialog-Management von Alexa nutzen zu können, sind zusätzlich zu den Intents noch Slots notwendig. Diese Slots sind als Platzhalter zu verstehen, die vom Nutzer im Dialog erfragt werden sollen. Folgendes Beispiel erklärt dabei den Ablauf eines Dialogs mit den entsprechenden Verknüpfungspunkten der Alexa Developer Console:
+
+Ein Nutzer sagt \textit{,,Alexa, starte Pflegix''} und startet damit den Skill. Daraufhin sagt der Nutzer \textit{,,Schreibe eine Nachricht''} und startet damit den ,,new\_message''-Intent (siehe Abbildung \ref{fig:intents}).
+Alexa erkennt nun, dass für das erfolgreiche Abschließen dieses Intents erfragt werden muss, wer der Empfänger ist, und wie die Nachricht lautet.
+Daher arbeitet Alexa diese Fragen ab (\textit{,,An wen soll die Nachricht gehen?'', ,,Diktiere mir Deine Nachricht''}). Sind alle fehlenden (und benötigten) Slots mit Inhalt gefüllt und bei Bedarf auch bestätigt worden, informiert Alexa das Backend über das Abschließen des Dialogs, sodass nun die Nachricht gesendet werden kann.
+Als Grundlage des Skills wurden analog zu den in Abbildung \ref{fig:structure} dargestellten Methoden verschiedene Intents erzeugt, welche in Abbildung \ref{fig:intents} zu sehen sind. Zudem ist in dieser Abbildung zu sehen, dass ein Intent aus vielen Sprachbefehlen besteht (Beispiel: request\_messages mit sieben Befehlen). Um nun mehr Fälle abdecken zu können, was Nutzer potentiell sagen könnten um einen Intent anzusprechen, sind vor allem Realtests notwendig, durch die weitere Sprachbefehle zu einem Intent hinzukommen.
+
+Zu jedem Intent gibt es zudem noch die Möglichkeit, sogenannte Slots einzubauen. Diese Slots ermöglichen eine effiziente Dialogführung. Dies wird nun am Beispiel des request\_messages-Intents erläutert:
+Der genannte Intent besteht ein Mal aus den Utterances, also den verschiedenen Sprachbefehlen, um dieses Intent anzusprechen. Zusätzlich dazu befinden sich die Slots \textit{read, reply, message} und \textit{selected} innerhalb des Intents. Die Aufgabe, die durch ansprechen dieser Funktion des Skills ausgeführt werden soll, ist die Nachrichtenabfrage. Sind nun mehrere neue Nachrichten für den Nutzer empfangen worden, so kann der Nutzer durch einen Dialog mit Alexa den booleschen Slot \textit{read} füllen, indem er auf bestätigt oder auch verneint, dass die Nachrichten vorgelesen werden sollen. Um nun eine von mehreren Nachrichten speziell abzurufen, wird der numerische Slot \textit{selected} in einem kurzen Dialog gefüllt. Wurde die Nachricht nun erfolgreich vorlesen, wird der Nutzer gefragt, ob er nun auf diese Nachricht antworten möchte, woraufhin dieser den booleschen Slot \textit{reply} mit Inhalt füllt. Wird der Nutzer daraufhin von Alexa aufgefordert, eine Nachricht zu diktieren, wird der Freitext-Slot \textit{message} ausgefüllt und der Dialog wäre damit abgeschlossen.
+
+Analog zu diesem Beispiel wird der Nutzer durch einfache Dialoge durch komplexere Mechanismen des Skills durchgeführt. Dadurch ist einerseits gewährleistet, dass keine hohen Anforderungen an das Gedächtnis des Nutzers gestellt wird und andererseits wird durch gezieltes Nachfragen und Einholen von Validierung des Nutzers dir Fehlerhäufigkeit drastisch reduziert. Zusätzlich zu den Slots im oben aufgeführten Beispiel, die nicht notwendig für das Abschließen des Intents sind, gibt es die Möglichkeit, Slots als notwendig anzulegen. Das bietet dem Entwickler die Möglichkeit über das Backend dem Skill nicht nur mitzuteilen, welchen speziellen Slot Alexa nun erfragen soll, sondern stattdessen durch alle notwendigen Slots zu iterieren und diese zu erfragen. Das senkt den Codeumfang des Backends erheblich.
+
+\begin{figure} [H]
+    \includegraphics[width=\textwidth]{resources/images/intents.png}
+    \caption{Intents des Pflegix Skills}
+    \label{fig:intents}
+\end{figure}
+
+\subsubsection{Account-Linking}
+Damit der Skill mit den Pflegix Servern kommunizieren kann und Anfragen für den Nutzer an diesen senden kann, muss dem Skill mitgeteilt werden, welcher Endpunkt angesprochen werden soll.
+Da für eine schnelle Entwicklung mit schnellen Testphasen eine Entwicklung auf dem lokalen System gewählt wurde, wurde das Tool Ngrok (\citealp{Ngrok}) genutzt, um die lokale Maschine über das Internet erreichbar zu machen. Die entsprechende URL wurde dann in der Amazon Developer Console hinterlegt.
+
+Zusätzlich zum einfachen Endpunkt, der die Anfragen verarbeitet, ist noch ein Account-Linking (siehe Abbildung \ref{fig:linking}) notwendig. Dieses bewirkt, dass sobald der Amazon und der Pflegix Account ein mal verknüpft wurden, jede Alexa-Instanz des Nutzers (Smartphone, Echo) Zugriff auf die Pflegix-Daten hat. Dazu wird eine Authorisierungs URI genutzt, die den Nutzer beim Initialisieren des Skills auf eine Login-Seite des Authentifizierungsservers leitet. Sobald die Anmeldung dann vollzogen und Alexa durch den Nutzer Zugriff auf die Pflegix-Server gewährt wurde, wird an eine der Redirection URLs der in diesem Vorgang produzierte Autorisierungscode weitergegeben. Mithilfe dieses Codes ist Alexa dann in der Lage den Access Token abzurufen (über die angegebene Access Token URI) und, sollte ein Access Token nicht mehr gültig sein, auch jederzeit einen neuen abzurufen.
+Der Vorgang des Erneuerns des Access Tokens geschieht durch den Alexa Service von alleine und benötigt keine weitere Konfiguration.
+Dadurch, dass Alexa mithilfe des Access Tokens die Möglichkeit hat, den Server Endpunkt für die Anfragen anzusprechen und sich gegen diesen als Nutzer authentifizieren kann, wird im Folgenden die programmatische Entwicklung des Intent-Handlings behandelt.
+\begin{figure} [H]
+    \includegraphics[width=\textwidth]{resources/images/account-linking.png}
+    \caption{Account Linking}
+    \label{fig:linking}
+\end{figure}
+
+\subsection{Intent-Handling}
+Das Intent-Handling, macht den Hauptteil dieser Arbeit aus. Erst durch das Zusammenfügen des Intent-Handlings mit den im vorherigen Unterkapitel behandelten Aktionen in der Amazon Developer Console entsteht ein nutzbarer Skill.
+\subsubsection{Vorbereitungen}
+Die Möglichkeiten für die Alexa-Plattform ein Backend bereitzustellen sind vielfältig. Zusätzlich zu der von Amazon angeboten AWS Lambda-Infrastruktur, bietet Amazon verschiedene SDKs an, mit denen Entwickler arbeiten können. Diese sind alle in unterschiedlichen Programmiersprachen entwickelt und bieten daher eine gute Möglichkeit, Alexa in vorhandene Strukturen einzufügen.
+
+Da die Infrastruktur von Pflegix in Node.js entstanden ist, bot sich für diese Arbeit das Node.js ,,Amazon Skills Kit'' an.
+Simultan zu dem bereits in Kapitel \ref{sssec:authserver} beschriebenen Authentifizierungsserver sollte der Alexa-Server entstehen.
+\subsubsection{Kategorisierung der Intents}
+Da sich recht früh in der Entwicklung herausstellte, dass die einzelnen Intent zu umfangreich würden und durch die Menge an zu schreibenden Intents eine mangelnde Übersicht drohte, wurde der Skill, beziehungsweise die Intents in eigene Module ausgelagert. Dadurch sollte einerseits gewährleistet sein, dass der Code übersichtlich und lesbar bleibt und andererseits, dass die Wartbarkeit des Codes deutlich vereinfacht wird.
+
+Zusätzlich zu diesem Schritt, wurden auch noch globale Variablen angelegt. Diese sollen für die Dauer eines Gesprächs diverse Informationen bereithalten (Nutzername, wiederkehrende Sprachausgaben, abgerufene Nachrichten und andere häufig genutzte Variablen).
+Das ist nötig, um einen personalisierten Skill anbieten zu können, ohne bei jeder Anfrage des Nutzers mehrere Datenbankabfragen durchführen zu müssen, um den Namen, die Id oder auch die Nachrichten neu abzufragen. Die globalen Variablen dienen also der effizienteren Abfrage von Nutzerinformationen.
+\subsubsection{Umsetzung der Intents}
+Im Folgenden wird nun für alle Intents kurz geschildert, wie diese umgesetzt wurden. Speziell wird auf die Intents der Nachrichtenabfrage, der Anfrage eines Helfers und der Notfallfunktion eingegangen.
+
+Zuerst wurde die Nachrichtenabfrage eingebaut (Intent: ,,request\_messages''). Diese sollten den Zweck erfüllen, dass ein Nutzer neue Nachrichten, oder sofern es keine neuen Nachrichten gab, die letzten fünf Nachrichten abrufen kann.
+
+Die einzelnen Intents müssen entsprechend der Dialogführung einer gewissen Reihenfolge unterstehen (siehe Reihenfolge Abbildung \ref{fig:slotsRequest}). In dem Fall der Nachrichtenabfrage heißt das, dass der Nutzer, sofern es neue Nachrichten gab, eine Möglichkeit der Auswahl bekommt, welche dieser Nachrichten er abrufen möchte (,,selected''). Gibt es lediglich alte Nachrichten, wird der Nutzer gefragt, ob die letzten fünf Nachrichten vorgelesen werden sollen (,,read''). Sollte der Nutzer eine Nachricht ausgewählt haben, wird diese vorgelesen und der Nutzer wird gefragt, ob er auf die Nachricht antworten möchte (,,reply''). Bestätigt er diese Abfrage, bittet Alexa den Nutzer, eine Nachricht zu diktieren (,,message'').
+\begin{figure} [H]
+    \includegraphics[width=\textwidth]{resources/images/slots_request_messages.png}
+    \caption{Slots des Intents \textit{request\_messages}}
+    \label{fig:slotsRequest}
+\end{figure}
+
+Damit Alexa Informationen darüber bekommt, ob und wie viele neue Nachrichten für den Nutzer vorhanden sind, wird zuallererst eine Datenbankabfrage für den entsprechenden Nutzer ausgeführt, die das Attribut \textit{lastRead} einer Konversation prüft. Daraufhin werden die zu der entsprechenden Konversation gehörenden neuen Nachrichten abgefragt. Im Folgenden sind beide Datenbankabfragen aufgeführt. Die Verknüpfung für die oben aufgeführte Logik geschieht an anderer Stelle im Code.
+\begin{lstlisting}
+    // Query to get all conversations of a user.
+    exports.find = userId =>
+    Promise.resolve(Conversation.find({ participants: userId })
+      .sort('-createdAt')
+      .populate({
+        path: 'participants',
+        model: User,
+        select: 'firstname lastname role slug'
+      }).exec()
+    )
+\end{lstlisting}
+\begin{lstlisting}
+    // Query to get all unread messages for a specified conversation.
+    exports.findNew = (conversation, lastRead) =>
+    Promise.resolve(Message.find({
+        conversation: conversation._id,
+        messagetype: "text",
+        updatedAt: { $gte: lastRead }
+        })
+        .sort("-createdAt")
+        .populate({
+            path: "author",
+            select: "firstname lastname role slug"
+        })
+        .exec()
+    );
+\end{lstlisting}
+
+Wenn nun beispielsweise keine neue Nachricht gefunden wurde, fragt Alexa den Nutzer ob dieser die letzten fünf Nachrichten vorgelesen haben möchte. Daraufhin muss das Backend zuerst den entsprechenden Slot \textit{read} überprüfen um abzufragen, ob der Nutzer dieser Frage zustimmte.
+Dann wird der aktuelle \textit{message\_intent} innerhalb des Codes geändert, um die folgenden Dialogabfragen des Nutzers richtig zuordnen zu können.
+
+Der \textit{message\_intent} dient dabei als Positionsvariable innerhalb des \textit{request\_messages}-Intents.
+Diese Variable wird vor allem dafür genutzt, damit die vier Slots mehrfach genutzt werden können und um den Verlauf der Abfragen zu bestimmen.
+
+Als Beispiel würde bei neuen Nachrichten die Variable auf 'ask\_to\_read' gesetzt, während sie bei keinen neuen Nachrichten und der daraus folgenden Frage, ob die letzten fünf alten Nachrichten vorgelesen werden sollen, auf 'ask\_to\_read\_old' gesetzt wird. Dies ist vor allem deswegen nötig, damit die Slots für beide Fälle genutzt werden können, sowie um beim Durchlaufen von Nachrichten den korrekten Array zu wählen.
+
+Daraufhin wird die angefragte Konversation mit den neuen, beziehungsweise der letzten Nachricht aus der Datenbank abgerufen und in ein lesbares Format für die Ausgabe mit der Alexa-Plattform gebracht.
+
+Zuletzt wird der Nutzer noch gefragt, ob er auf diese Nachricht antworten will. Um Alexa nun mitzuteilen, dass der \textit{reply}-Slot abgefragt wird, ruft man
+\begin{lstlisting}
+    this.emit(':elicitSlot', 'reply', speechOutput, repromtOutput)
+\end{lstlisting}
+auf.
+
+\begin{wrapfigure}{r}{0.4\textwidth}
+    \includegraphics[width=0.38\textwidth]{resources/images/chatverlauf-nachrichtenabfrage.png}
+    \caption{Beispieldialog der Nachrichtenabfrage}
+    \label{fig:chatverlauf}
+
+\end{wrapfigure}
+Diese gibt Alexa den Befehl, mithilfe des ,,elicitSlot-Directives'' den Slot \textit{reply} zu erfragen. Hierfür gibt man einen String mit (speechOutput), den Alexa daraufhin dem Nutzer sagt und einen weiteren String (repromtOutput) für den Fall, dass der Nutzer entweder zu spät oder gar nicht auf die Frage reagierte oder falsch auf sie antwortete.
+
+Antwortet der Nutzer nun auf diesen Befehl, wird eine neue Anfrage an das Backend geschickt, die den ausgefüllten Slot enthält, woraufhin das Backend entsprechend der in Abbildung \ref{fig:nachrichten_diagram} gezeigten Abläufe den Dialog fortführt.
+
+Ein typischer Dialogablauf für das Anfragen der Nachrichten ist in Abbildung \ref{fig:chatverlauf} zu sehen.
+
+Während der Entwicklung wurde schnell absehbar, dass einzelne Intents nicht durch einen einzigen Satz des Nutzers abgedeckt werden konnten, ohne dass oft Fehler bei der Erkennung auftraten. Daher wurde als grundlegendes Konzept der Benutzerführung das Aufsplitten der einzelnen Intents gewählt, um durch Bestätigungen und einfache Fragen die Möglichkeiten für das Auftreten von Fehlern zu reduzieren. Diese Art der Benutzerführung wurde in jedem Intent weitestgehend berücksichtigt, sodass viele komplexere Befehle, wie dem Erstellen einer Nachricht an eine bestimmte Person, in mehrere Unterbefehle gegliedert wurde.
+
+Diese Art der Benutzerführung kommt zugleich dem Nutzer zugute, da dieser sich einerseits nicht merken muss, welche Informationen für einen Befehl benötigt werden und andererseits für die wichtigsten dieser Subinformationen eine bestätigende Abfrage durch Alexa enthält um so die Möglichkeit zu bekommen, nur einen Teil des Befehls zu korrigieren, anstatt den kompletten, zusammengesetzten Befehl neu diktieren zu müssen.
+
+Ein etwas anderer Ansatz für die Dialoggestaltung wurde bei der Umsetzung des Intents für die Anfrage an Helfer (\textit{new\_request}) verfolgt.
+
+Zuerst einmal muss dazu gesagt werden, dass die Funktion der konkreten Terminanfragen an Helfer derzeit noch nicht innerhalb des Pflegix-Systems integriert wurde, allerdings als geplantes Feature für dieses Jahr ansteht. Daher wurde dieser Intent als eine Art spezieller Nachrichtenversand gebaut. Die Terminanfragen, die durch den Intent \textit{new\_request} erstellt werden, werden daher derzeit in eine lesbare Nachricht umgewandelt, die dann an den entsprechenden Helfer gesand wird. Dabei wurde diese Funktion bewusst nicht in den \textit{request\_messages}- oder \textit{new\_message}-Intent mit integriert, da einerseits zwar die derzeitige Funktion recht ähnlich zu einer einfachen Nachricht ist, jedoch andererseits alleine schon durch die zukünftige Umsetzung einer solchen Funktion ein entsprechender Intent sinnvoll ist, sowie auch, da die Abfragen für eine Anfrage im einfachen Nachrichtenversand durchaus stören können.
+Anders als beim bereits vorgestellten \textit{request\_messages}-Intent, sind bei diesem Intent alle Slots benötigt, um den Intent erfolgreich abzuschließen. Programmatisch macht sich das vor allem dadurch sichtbar, dass statt der vielen vorher benötigten if-Bedingungen und Abfragen der Slots nur ein \textit{:delegate}-Directive genutzt wird, bis alle Slots valide gefüllt sind.
+Die Befehle, die für diesen Intent genutzt werden können, können dabei einen, mehrere oder gar keinen der Slots direkt füllen. Da die einzelnen Slots verschiedenen Funktionen dienen, haben sie auch weitestgehen verschiedene Typen. Dadurch ist es möglich, in einem Befehl mehrere Slots zuverlässig zuzuordnen. So ist beispielsweise der Slot \textit{time} vom Typ ,,AMAZON.Date'' und der Slot \textit{user} vom Typ ,,AMAZON.DE\_FIRST\_NAME''.
+
+Ein Slot des \textit{new\_request}-Intents ist jedoch nicht für die korrekte Verarbeitung des Intents notwendig. Der \textit{selected}-Slot wird erst dann benötigt, wenn der Nutzer eine Person genannt hat, dessen Name nicht in der Liste der verfügbaren Kontakte gefunden wurde, sodass eine Auswahl an Personen mit dem selben ersten Buchstaben im Vornamen für den Nutzer gestellt wird. Wurde ein Name korrekt angesagt und korrekt erkannt, und wurde dieser Name in den Kontakten gefunden, wird dieser Slot nicht abgefragt.
+
+Dennoch ist es in diesem Intent möglich, das \textit{:delegat}-Directive zu nutzen, um alle anderen Slots zu erfragen. Der Unterschied zwischen den benötigten und nicht benötigten Slots findet sich in der Amazon Developer Console. Dort kann man genau diesen Punkt für jeden Slot einstellen. Das genannte Directive wird dabei nur die Slots erfragen, die auch als benötigt gekennzeichnet wurden.
+
+Konkret wurden für den \textit{new\_request}-Intent fünf Slots verwendet. Der Slot \textit{user} ist das Freifeld für den Vornamen des gewünschten Partners. Der Slot \textit{date} erfasst das Datum, wohingegen der Slot \textit{time} die entsprechende Uhrzeit enthält. Der Slot \textit{tasks} vom Typ ,,AMAZAON.SearchQuery'' dient als Freitextfeld für die Ansage von Aufgaben, die für den genannten Zeitpunkt anfallen. Die genannten Slots sind allesamt essentiell für die Erfüllung des Intents. Der letzte, bereits erwähnte, \textit{selected}-Slot is vom Typ ,,AMAZON.Number'' und dient der einfachen Auswahl bei Nennung einer Liste.
+
+Fur diesen Intent wurde die Entscheidung getroffen, dass einzelne Slots keine Bestätigungsabfrage erhalten sollen. Bei den vier genannten notwendigen Slots würden jeweils eine Frage für die Bestätigung den kompletten Dialog in die Länge ziehen. Da in vielen Durchläufen gerade die Zeit und das Datum zuverlässig erkannt wurden und das Freitextfeld für die Aufgaben bereits am Ende der Erfragung der Intents steht, wurden für diese keine Abfragen eingerichtet. Für den Vorname des Partners wurde im Speziellen keine extra Abfrage eingerichtet, da sofern ein Nutzer genannt wird, die oft unterschiedlichen Schreibweisen der Vornamen dafür sorgen, dass der genannte Name nicht mit dem aus der Datenbank übereinstimmt. Daher wurde stattdessen darauf gesetzt, dass der erste Buchstabe richtig von Alexa erkannt wird, sodass im Fall, dass der genannte Name nicht in der Datenbank gefunden wurde, aus den bekannten Kontakten eine Liste der Kontakte erstellt wird, die diesen Vornamen haben. Diese wird dann im entsprechenden Fall hinter die Abfrage der anderen Slots angehangen.
+
+Nachdem alle Slots gefüllt wurden, wird eine Bestätigung durch den Nutzer erfragt, indem alle Slots noch einmal wiederholt werden, sodass ein Nutzer noch die Möglichkeit der Korrektur hat.
+
+\subsection{Roll-Out}
+\subsubsection{Voraussetzungen}
+\subsubsection{Maßnahmen}
+\subsubsection{Statistiken}

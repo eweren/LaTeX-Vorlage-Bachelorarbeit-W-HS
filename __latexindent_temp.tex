@@ -1,0 +1,33 @@
+%Dokumenteinstellungen und Anpassungen
+\input{resources/settings/settings}
+\input{resources/styles/adjustments}
+\usepackage{csquotes}
+\usepackage[backend=biber, citestyle=numeric, sorting=none]{biblatex}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\addbibresource{bachelorarbeit.bib}
+
+\newcommand{\subsubsubsection}[1]{\paragraph{#1}\mbox{}\\}
+\setcounter{secnumdepth}{4}
+\setcounter{tocdepth}{4}
+
+\begin{document}
+\pagenumbering{Roman}
+
+\tableofcontents
+\newpage
+\pagenumbering{arabic}
+
+%\mainmatter
+\input{chapter/1_Einleitung.tex}
+\newpage
+\input{chapter/2_Analyse.tex}
+\newpage
+
+\section{Konzeption}
+\label{sec:konzeption}
+
+\newpage
+\printbibliography
+
+\end{document}
